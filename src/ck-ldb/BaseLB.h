@@ -34,6 +34,7 @@ public:
   struct ProcStats {		// per processor data
     int n_objs;			// number of objects on the processor
     double pe_speed;		// processor frequency
+double idleTime;
 #if defined(TEMP_LDB)
 	float pe_temp;
 #endif

@@ -483,7 +483,7 @@ extern "C" int LDProcessorSpeed()
   
   if (thisProcessorSpeed != -1) return thisProcessorSpeed;
 
-  //if (CkMyPe()==0) CkPrintf("Measuring processor speeds...");
+  if (CkMyPe()==0) CkPrintf("Measuring processor speeds...");
 
   static int result=0;  // I don't care what this is, its just for
 			// timing, so this is thread safe.
@@ -510,6 +510,7 @@ extern "C" int LDProcessorSpeed()
     const double end_time = CmiCpuTimer();
     const double correction = elapse / (end_time-start_time);
     wps = (int)((double)wps * correction + 0.5);
+if (CkMyPe()==0) CkPrintf("speeds... %d", wps);
   }
   
   // If necessary, do a check now

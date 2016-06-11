@@ -65,6 +65,7 @@ private:
   int count_msgs;
   void initLB(const CkLBOptions &);
 public:
+double idleTime[8],oldIdle[8],newIdle[8];
   CkMarshalledCLBStatsMessage bufMsg;
   SpanningTree st;
   CentralLB(const CkLBOptions & opt):BaseLB(opt) { initLB(opt); 
@@ -82,7 +83,7 @@ public:
 #endif
 
   virtual ~CentralLB();
-
+double getIdleTime(int);
   void pup(PUP::er &p);
 
   void turnOn();
@@ -298,6 +299,7 @@ public:
 
   int from_pe;
   int pe_speed;
+double idleTime;
   LBRealType total_walltime;
   LBRealType idletime;
   LBRealType bg_walltime;

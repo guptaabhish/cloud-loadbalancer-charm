@@ -329,6 +329,48 @@ void CentralLB::ReceiveCounts(CkReductionMsg  *msg)
     // broadcast call to let everybody start to send stats
   thisProxy.SendStats();
 }
+int numCPUPerNode=1;
+double CentralLB::getIdleTime(int p)
+{
+        FILE * pFile;
+//	double idleTime[8],oldIdle[8],newIdle[8];
+        char str[1000];
+        pFile = fopen ("/proc/stat","r");
+        fgets (str, 1000,pFile);
+        for(int i=0;i<numCPUPerNode;i++)
+        {
+                fgets (str, 1000, pFile);
+//              CkPrintf("sss: %s\n",str);
+ char * pch;
+  pch = strtok (str," ");
+  int cc=0;
+  while (pch != NULL)
+  {
+//    printf ("%s ",pch);
+    if(cc==4)
+    {
+        newIdle[i] = ((double) atoi(pch))/100.0;
+//      CkPrintf("**%f** ",newIdle[i]);
+    }
+    pch = strtok (NULL, " ");
+        cc++;
+  }
+//CkPrintf("\n");
+        }
+///////
+        for(int i=0;i<numCPUPerNode;i++)
+        {
+//                CkPrintf("PROC#%d idle=%f\n",i,newIdle[i]-oldIdle[i]);
+                idleTime[i] = newIdle[i]-oldIdle[i];
+        }
+////////
+for(int i=0;i<numCPUPerNode;i++)
+        oldIdle[i] = newIdle[i];
+//	printf("The Idle time=%f for Proc#%d\n",idleTime[p%numCPUPerNode],p);
+//	return idleTime[p%numCPUPerNode];
+	return idleTime[0];
+}
+
 
 void CentralLB::BuildStatsMsg()
 {
@@ -358,6 +400,7 @@ void CentralLB::BuildStatsMsg()
   theLbdb->GetTime(&msg->total_walltime,&msg->total_walltime,
 		   &msg->idletime, &msg->bg_walltime,&msg->bg_walltime);
 #endif
+msg->idleTime = getIdleTime(CkMyPe());
 #if defined(TEMP_LDB)
 	float mytemp=getTemp(CkMyPe()%physicalCoresPerNode);
 	int freq=cpufreq_sysfs_read (CkMyPe()%logicalCoresPerNode);
@@ -513,6 +556,7 @@ void CentralLB::depositData(CLBStatsMsg *m)
 #endif
 
   procStat.pe = pe;
+procStat.idleTime = m->idleTime;
   procStat.total_walltime = m->total_walltime;
   procStat.idletime = m->idletime;
   procStat.bg_walltime = m->bg_walltime;
@@ -600,6 +644,8 @@ void CentralLB::ReceiveStats(CkMarshalledCLBStatsMessage &msg)
       procStat.bg_cputime = m->bg_cputime;
 #endif
       procStat.pe_speed = m->pe_speed;
+//  CmiPrintf("ProcStat Speed is %d %d %d \n ", CkMyPe(), procStat.pe_speed, m->pe_speed); 
+procStat.idleTime = m->idleTime;
       //procStat.utilization = 1.0;
       procStat.available = true;
       procStat.n_objs = m->n_objs;
@@ -666,7 +712,7 @@ void CentralLB::LoadBalance()
 #endif
 
   theLbdb->ResetAdaptive();
-  if (!_lb_args.samePeSpeed()) statsData->normalize_speed();
+ // if (!_lb_args.samePeSpeed()) statsData->normalize_speed();
 
   if (_lb_args.debug()) 
       CmiPrintf("\nCharmLB> %s: PE [%d] step %d starting at %f Memory: %f MB\n",
@@ -1734,6 +1780,7 @@ void CLBStatsMsg::pup(PUP::er &p) {
   p|from_pe;
   p|pe_speed;
   p|total_walltime;
+p|idleTime;
   p|idletime;
 #if defined(TEMP_LDB)
 	p|pe_temp;

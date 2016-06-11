@@ -8,16 +8,23 @@
 #include "RefineLB.h"
 
 CreateLBFunc_Def(RefineLB, "Move objects away from overloaded processor to reach average")
-
+double oldTime,curTime,lbTime;
+int numCPUPerNode1=4;
 RefineLB::RefineLB(const CkLBOptions &opt): CentralLB(opt)
-{
+{ 
+  oldTime = curTime = 0.0;
   lbname = (char *)"RefineLB";
+getIdleTime(0);
+numCPUPerNode1=1;
   if (CkMyPe() == 0)
     CkPrintf("[%d] RefineLB created\n",CkMyPe());
 }
 
 void RefineLB::work(LDStats* stats)
 {
+curTime = CmiWallTimer();
+lbTime = curTime - oldTime;
+CkPrintf("------------- RefineLB work --------------- curTime = %f oldTime = %f lbTime = %f, pes =%d\n",curTime,oldTime,lbTime,stats->nprocs());
   int obj;
   int n_pes = stats->nprocs();
 
@@ -27,6 +34,16 @@ void RefineLB::work(LDStats* stats)
 
   // get original object mapping
   int* from_procs = Refiner::AllocProcs(n_pes, stats);
+//////////////////////////////////////////////////////////////////////////////////////
+int numProcs = n_pes;
+if(idleTime!=NULL) delete [] idleTime;
+idleTime = new double[numProcs];
+for(int i=0;i<numProcs;i++) 
+{
+	idleTime[i] = stats->procs[i].idleTime;
+	CkPrintf("PROC#%d IDLE T=%f\n",i,idleTime[i]);
+}
+//////////////////////////////////////////////////////////////////////////////////////
   for(obj=0;obj<stats->n_objs;obj++)  {
     int pe = stats->from_proc[obj];
     from_procs[obj] = pe;
@@ -37,7 +54,8 @@ void RefineLB::work(LDStats* stats)
 
   Refiner refiner(1.003);  // overload tolerance=1.05
 
-  refiner.Refine(n_pes, stats, from_procs, to_procs);
+ // refiner.Refine(n_pes, stats, from_procs, to_procs);
+  refiner.Refine(n_pes, stats, from_procs, to_procs,lbTime,idleTime);
 
   // Save output
   for(obj=0;obj<stats->n_objs;obj++) {
@@ -64,6 +82,7 @@ void RefineLB::work(LDStats* stats)
   // Free the refine buffers
   Refiner::FreeProcs(from_procs);
   Refiner::FreeProcs(to_procs);
+  oldTime = CmiWallTimer();
 }
 
 #include "RefineLB.def.h"

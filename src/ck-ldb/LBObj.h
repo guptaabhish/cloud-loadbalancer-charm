@@ -41,14 +41,16 @@ public:
 
   void IncrementTime(LBRealType walltime, LBRealType cputime);
   inline void StartTimer(void) {
-	startWTime = CkWallTimer();
+//	startWTime = CkWallTimer();
+	startWTime = CkCpuTimer();
 #if CMK_LB_CPUTIMER
 	startCTime = CkCpuTimer();
 #endif
   }
   inline void StopTimer(LBRealType* walltime, LBRealType* cputime) {
 	if (startWTime >= 0.0) {	// in case startOn in middle of entry
-          const double endWTime = CkWallTimer();
+//          const double endWTime = CkWallTimer();
+const double endWTime = CkCpuTimer();
 	  *walltime = endWTime - startWTime;
 #if CMK_LB_CPUTIMER
           const double endCTime = CkCpuTimer();

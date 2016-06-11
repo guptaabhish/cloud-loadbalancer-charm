@@ -26,6 +26,8 @@ void Refiner::create(int count, BaseLB::LDStats* stats, int* procs)
   // now numComputes is all the computes: both migratable and nonmigratable.
   // afterwards, nonmigratable computes will be taken off
 
+  unsigned int  maxspeed = 0;
+    sumFreqs=0;
   numAvail = 0;
   for(i=0; i < P; i++) {
     processors[i].Id = i;
@@ -34,10 +36,23 @@ void Refiner::create(int count, BaseLB::LDStats* stats, int* procs)
     processors[i].computeLoad = 0;
     processors[i].computeSet = new Set();
     processors[i].pe_speed = stats->procs[i].pe_speed;
+    if (processors[i].pe_speed > maxspeed) maxspeed = processors[i].pe_speed;
+    CmiPrintf(" PE SPEED %d %d \n", i, processors[i].pe_speed);
 //    processors[i].utilization = stats->procs[i].utilization;
     processors[i].available = stats->procs[i].available;
     if (processors[i].available == true) numAvail++;
   }
+ // Normalize PE SPeed
+
+  for(int i=0; i < P; i++){
+    processors[i].pe_speed *=100;
+    processors[i].pe_speed /= maxspeed;
+    sumFreqs+=processors[i].pe_speed;
+    CmiPrintf(" PE SPEED %d %d \n", i, processors[i].pe_speed);
+}
+
+
+    CmiPrintf(" PE SPEED SUM %d %d \n", i, sumFreqs);
 
   for (i=0; i<stats->n_objs; i++)
   {
@@ -71,17 +86,27 @@ void Refiner::assign(computeInfo *c, processorInfo *p)
 {
    c->processor = p->Id;
    p->computeSet->insert((InfoRecord *) c);
-   p->computeLoad += c->load;
-   p->load = p->computeLoad + p->backgroundLoad;
+   int oldPe=c->oldProcessor;
+   p->computeLoad += c->load*p->pe_speed;
+   p->load = p->computeLoad + p->backgroundLoad*p->pe_speed;
+
+ //  p->computeLoad += c->load;
+ //  p->load = p->computeLoad + p->backgroundLoad;
 }
 
 void  Refiner::deAssign(computeInfo *c, processorInfo *p)
 {
    c->processor = -1;
    p->computeSet->remove(c);
-   p->computeLoad -= c->load;
-   p->load = p->computeLoad + p->backgroundLoad;
+   int oldPe=c->oldProcessor;
+   p->computeLoad -= c->load*p->pe_speed;
+   p->load = p->computeLoad + p->backgroundLoad*p->pe_speed;
+//   p->computeLoad -= c->load;
+  // p->load = p->computeLoad + p->backgroundLoad;
 }
+
+
+
 
 double Refiner::computeAverageLoad() {
   computeAverage();
@@ -92,13 +117,14 @@ void Refiner::computeAverage()
 {
   int i;
   double total = 0.;
-  for (i=0; i<numComputes; i++) total += computes[i].load;
+  for (i=0; i<numComputes; i++) total += computes[i].load*processors[computes[i].oldProcessor].pe_speed;
 
   for (i=0; i<P; i++)
     if (processors[i].available == true) 
-	total += processors[i].backgroundLoad;
+	total +=processors[i].backgroundLoad*processors[i].pe_speed;
 
   averageLoad = total/numAvail;
+   totalInst=total;
 }
 
 double Refiner::computeMax()
@@ -107,7 +133,26 @@ double Refiner::computeMax()
   double max = -1.0;
   for (i=0; i<P; i++) {
     if (processors[i].available == true && processors[i].load > max)
-      max = processors[i].load;
+  //    max = processors[i].load;
+      max=processors[i].load/processors[i].pe_speed;
+  }
+  return max;
+}
+
+double Refiner::computeMax(int *maxPe)
+{
+  int i;
+  double max = -1.0,maxratio=-1.0;
+  for (i=0; i<P; i++) {
+//CkPrintf(" ********** pe%d load=%f freq=%d ratio=%f\n",processors[i].Id,processors[i].load,procFreqNew[processors[i].Id],processors[i].load/procFreqNew[processors[i].Id]);
+    if (processors[i].available == CmiTrue && processors[i].load/processors[i].pe_speed > maxratio)
+    {
+//      max = processors[i].load;
+//CkPrintf(" ********** pe%d load=%f freq=%d \n",processors[i].Id,processors[i].load,procFreqNew[processors[i].Id]);
+        maxratio=processors[i].load/processors[i].pe_speed;
+        max=processors[i].load;
+        *maxPe=processors[i].Id;
+    }
   }
   return max;
 }
@@ -115,7 +160,8 @@ double Refiner::computeMax()
 int Refiner::isHeavy(processorInfo *p)
 {
   if (p->available == true) 
-     return p->load > overLoad*averageLoad;
+    // return p->load > overLoad*averageLoad;
+    return p->load > overLoad*(totalInst*p->pe_speed/sumFreqs);
   else {
      return p->computeSet->numElements() != 0;
   }
@@ -124,7 +170,8 @@ int Refiner::isHeavy(processorInfo *p)
 int Refiner::isLight(processorInfo *p)
 {
   if (p->available == true) 
-     return p->load < averageLoad;
+//     return p->load < averageLoad;
+        return p->load < totalInst*p->pe_speed;
   else 
      return 0;
 }
@@ -176,7 +223,7 @@ int Refiner::refine()
   int done = 0;
 
   while (!done) {
-    double bestSize;
+    double bestSize,bestIdle;
     computeInfo *bestCompute;
     processorInfo *bestP;
     
@@ -188,6 +235,7 @@ int Refiner::refine()
     processorInfo *p = (processorInfo *) 
       lightProcessors->iterator((Iterator *) &nextProcessor);
     bestSize = 0;
+    bestIdle = 0; 
     bestP = 0;
     bestCompute = 0;
 
@@ -205,14 +253,21 @@ int Refiner::refine()
 	    donor->computeSet->next((Iterator *)&nextCompute);
           continue;
         }
-	//CkPrintf("c->load: %f p->load:%f overLoad*averageLoad:%f \n",
-	//c->load, p->load, overLoad*averageLoad);
-	if ( c->load + p->load < overLoad*averageLoad) {
-	  // iout << iINFO << "Considering Compute : " 
-	  //      << c->Id << " with load " 
-	  //      << c->load << "\n" << endi;
-	  if(c->load > bestSize) {
-	    bestSize = c->load;
+//	CkPrintf("c->load: %f p->load:%f overLoad*averageLoad:%f \n",
+//	c->load, p->load, overLoad*averageLoad);
+//	CkPrintf("c->load * procpe_speed %f p->load:%f overLoad times%f Extra %f %f %f \n",  c->load*processors[c->oldProcessor].pe_speed , p->load ,overLoad*(totalInst*p->pe_speed/sumFreqs), averageLoad, p->load, bestIdle) ;
+//	if ( c->load + p->load < overLoad*averageLoad && averageLoad-p->load>bestIdle) {
+// TODO GET later
+//	if ( c->load*processors[c->oldProcessor].pe_speed + p->load < overLoad*(totalInst*p->pe_speed/sumFreqs) && averageLoad-p->load>bestIdle) {
+	if ( c->load*processors[c->oldProcessor].pe_speed + p->load < overLoad*(totalInst*p->pe_speed/sumFreqs) ) {
+	// iout << iINFO << "Considering Compute : " 
+	  //    << c->Id << " with load " 
+	    //  << c->load << "\n" << endi;
+//	CkPrintf("Inside c->load * procpe_speed %f p->load:%f overLoad times%f Extra %f %f %f \n",  c->load*processors[c->oldProcessor].pe_speed , p->load ,overLoad*(totalInst*p->pe_speed/sumFreqs), averageLoad, p->load, bestIdle) ;
+	  if(c->load*processors[c->oldProcessor].pe_speed > bestSize) {
+		bestIdle = averageLoad-p->load;
+//	    bestSize = c->load;
+	    bestSize = c->load*processors[c->oldProcessor].pe_speed;
 	    bestCompute = c;
 	    bestP = p;
 	  }
@@ -226,6 +281,7 @@ int Refiner::refine()
     }
 
     if (bestCompute) {
+CkPrintf("best load:%f\n",bestCompute->load);
       //      CkPrintf("Assign: [%d] with load: %f from %d to %d \n",
       //	       bestCompute->id.id[0], bestCompute->load, 
       //	       donor->Id, bestP->Id);
@@ -236,7 +292,8 @@ int Refiner::refine()
       break;
     }
 
-    if (bestP->load > averageLoad)
+ //  if (bestP->load > averageLoad)
+   if (bestP->load >  totalInst*bestP->pe_speed/sumFreqs )
       lightProcessors->remove(bestP);
     
     if (isHeavy(donor))
@@ -255,18 +312,22 @@ int Refiner::multirefine()
 {
   computeAverage();
   double avg = averageLoad;
-  double max = computeMax();
+	  int maxPe=-1;
+	//  double max = computeMax();
+	  double max = computeMax(&maxPe);
 
   const double overloadStep = 0.01;
   const double overloadStart = 1.001;
-  double dCurOverload = max / avg;
-                                                                                
+//  double dCurOverload = max / avg;
+	  double dCurOverload = max /(totalInst*processors[maxPe].pe_speed/sumFreqs); 
+
   int minOverload = 0;
   int maxOverload = (int)((dCurOverload - overloadStart)/overloadStep + 1);
   double dMinOverload = minOverload * overloadStep + overloadStart;
   double dMaxOverload = maxOverload * overloadStep + overloadStart;
   int curOverload;
   int refineDone = 0;
+	 CmiPrintf("maxPe=%d max=%f myAvg=%f dMinOverload: %f dMaxOverload: %f\n",maxPe,max,(totalInst*processors[maxPe].pe_speed/sumFreqs), dMinOverload, dMaxOverload);
   if (_lb_args.debug()>=1)
     CmiPrintf("dMinOverload: %f dMaxOverload: %f\n", dMinOverload, dMaxOverload);
                                                                                 
@@ -301,7 +362,7 @@ int Refiner::multirefine()
 }
 
 void Refiner::Refine(int count, BaseLB::LDStats* stats, 
-		     int* cur_p, int* new_p)
+		     int* cur_p, int* new_p,double lbTime,double *idleTime)
 {
   //  CkPrintf("[%d] Refiner strategy\n",CkMyPe());
 
@@ -311,6 +372,29 @@ void Refiner::Refine(int count, BaseLB::LDStats* stats,
   processors = new processorInfo[count];
 
   create(count, stats, cur_p);
+/////////////////////////////////
+// cs598 osman
+
+  double *tempLoad = new double[count];
+  for(int p=0;p<count;p++) tempLoad[p]=0.0;
+  for (int i=0; i<numComputes; i++)
+  {
+        CkPrintf("(%d:%d:%f), ",i, computes[i].oldProcessor, computes[i].load);
+	tempLoad[computes[i].oldProcessor]+=computes[i].load;
+  }
+    for (int i=0; i<count; i++) CkPrintf(" Total Obj Loads%d:%f ", i, tempLoad[i]);
+
+  for(int p=0;p<count;p++) 
+  {
+	processors[p].backgroundLoad = lbTime - tempLoad[p]-idleTime[p];
+//if(p==0) processors[p].backgroundLoad = averageLoad*2;
+
+/** Commented since happening later ***/
+// 	processors[p].load +=processors[p].backgroundLoad;
+  }
+
+/////////////////////////////////
+
 
   int i;
   for (i=0; i<numComputes; i++)
@@ -321,11 +405,11 @@ void Refiner::Refine(int count, BaseLB::LDStats* stats,
 
   computeAverage();
 
-  if (_lb_args.debug()>2)  {
+//  if (_lb_args.debug()>2)  {
     CkPrintf("Old PE load (bg load): ");
     for (i=0; i<count; i++) CkPrintf("%d:%f(%f) ", i, processors[i].load, processors[i].backgroundLoad);
     CkPrintf("\n");
-  }
+ // }
 
   multirefine();
 

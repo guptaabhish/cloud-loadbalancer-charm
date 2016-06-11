@@ -29,6 +29,7 @@ protected:
   double overLoad;
 
 public:
+double *idleTime;
   RefineLB(const CkLBOptions &);
   RefineLB(CkMigrateMessage *m):CentralLB(m) { lbname = (char *)"RefineLB"; }
   void work(LDStats* stats);
